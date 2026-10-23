@@ -1,1 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+ <meta charset="UTF-8">
+ <title>3D Dungeon RPG</title>
+ <style>
+ body {
+ margin: 0;
+ overflow: hidden;
+ background: #050508;
+ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+ user-select: none;
+ }
+ #hud {
+ position: absolute;
+ top: 20px;
+ left: 20px;
+ color: #fff;
+ text-shadow: 0 0 5px #000;
+ pointer-events: none;
+ display: flex;
+ flex-direction: column;
+ gap: 8px;
+ }
+ .bar-container {
+ width: 200px;
+ height: 20px;
+ background: rgba(0,0,0,0.8);
+ border: 2px solid #443;
+ border-radius: 4px;
+ overflow: hidden;
+ position: relative;
+ }
+ .bar-fill {
+ height: 100%;
+ width: 100%;
+ transition: width 0.1s;
+ }
+ #hp-fill { background: #b52b2b; }
+ #mp-fill { background: #2b7cb5; }
+ .bar-text {
+ position: absolute;
+ width: 100%;
+ text-align: center;
+ font-size: 12px;
+ font-weight: bold;
+ line-height: 16px;
+ }
+ #crosshair {
+ position: absolute;
+ top: 50%;
+ left: 50%;
+ width: 10px;
+ height: 10px;
+ margin-left: -5px;
+ margin-top: -5px;
+ border: 2px solid rgba(255, 255, 255, 0.7);
+ border-radius: 50%;
+ pointer-events: none;
+ }
+ #inventory-bar {
+ position: absolute;
+ bottom: 20px;
+ left: 50%;
+ transform: translateX(-50%);
+ display: flex;
+ gap: 10px;
+ background: rgba(10,10,15,0.85);
+ padding: 10px;
+ border-radius: 8px;
+ border: 2px solid #333;
+ }
+ .inv-slot {
+ width: 50px;
+ height: 50px;
+ background: #1a1a22;
+ border: 2px solid #444;
+ border-radius: 6px;
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ justify-content: center;
+ color: #888;
+ font-size: 11px;
+ cursor: pointer;
+ }
+ .inv-slot.active {
+ border-color: #d4ac0d;
+ color: #d4ac0d;
+ background: #262630;
+ }
+ .inv-icon { font-size: 20px; }
+ #instructions {
+ position: absolute;
+ top: 20px;
+ right: 20px;
+ color: #999;
+ font-size: 13px;
+ text-align: right;
+ text-shadow: 0 0 3px #000;
+ pointer-events: none;
+ }
+ </style>
+</head>
+<body>
 
+ <div id="hud">
+ <div>Здоровье:</div>
+ <div class="bar-container">
+ <div id="hp-fill" class="bar-fill"></div>
+ <div id="hp-text" class="bar-text">100 / 100</div>
+ </div>
+ <div>Магия:</div>
+ <div class="bar-container">
+ <div id="mp-fill" class="bar-fill"></div>
+ <div id="mp-text" class="bar-text">100 / 100</div>
+ </div>
+ <div style="margin-top: 5px; color: #bba;">Мрачное подземелье (Без врагов)</div>
+ </div>
+
+ <div id="instructions">
+ <strong>WASD</strong> — Движение<br>
+ <strong>Мышь</strong> — Обзор<br>
+ <strong>1 - 4</strong> — Выбор оружия
+ </div>
+
+ <div id="crosshair"></div>
+
+ <div id="inventory-bar">
+ <div class="inv-slot active" data-slot="0"><span class="inv-icon">🗡️</span>Меч</div>
+ <div class="inv-slot" data-slot="1"><span class="inv-icon">🛡️</span>Щит</div>
+ <div class="inv-slot" data-slot="2"><span class="inv-icon">🏹</span>Лук</div>
+ <div class="inv-slot" data-slot="3"><span class="inv-icon">🔮</span>Посох</div>
+ </div>
+
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+ <script>
+ let scene, camera, renderer;
+ let projectiles = [];
+
+ const playerStats = {
+ hp: 100,
+ maxHp: 100,
+ mp: 100,
+ maxMp: 100,
+ activeSlot: 0,
+ isBlocking: false
+ };
+
+ const move = { forward: false, backward: false, left: false, right: false };
+ let velocity = new THREE.Vector3();
+ let yawObject = new THREE.Object3D();
+
+ const PI_2 = Math.PI / 2;
+
+ init();
+ animate();
+
+ function init() {
+ scene = new THREE.Scene();
+ scene.background = new THREE.Color(0x06060a);
+ scene.fog = new THREE.FogExp2(0x06060a, 0.05);
+
+ camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+ yawObject.position.y = 2;
+ yawObject.add(camera);
+ scene.add(yawObject);
+
+ const ambientLight = new THREE.AmbientLight(0x222533, 0.6);
+ scene.add(ambientLight);
+
+ const pointLight = new THREE.PointLight(0xff7722, 1.2, 50);
+ pointLight.position.set(0, 12, 0);
+ scene.add(pointLight);
+
+ const floorGeo = new THREE.PlaneGeometry(120, 120, 32, 32);
+ const floorMat = new THREE.MeshStandardMaterial({ color: 0x15151c, roughness: 0.95, metalness: 0.1 });
+ const floor = new THREE.Mesh(floorGeo, floorMat);
+ floor.rotation.x = -Math.PI / 2;
+ scene.add(floor);
+
+ const ceilingGeo = new THREE.PlaneGeometry(120, 120);
+ const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x0d0d12, roughness: 1.0 });
+ const ceiling = new THREE.Mesh(ceilingGeo, ceilingMat);
+ ceiling.rotation.x = Math.PI / 2;
+ ceiling.position.y = 25;
+ scene.add(ceiling);
+
+ const wallMat = new THREE.MeshStandardMaterial({ color: 0x1f1f2b, roughness: 0.9, metalness: 0.2 });
+ const wallGeo = new THREE.PlaneGeometry(120, 25);
+ 
+ const wall1 = new THREE.Mesh(wallGeo, wallMat); wall1.position.set(0, 12.5, -60); scene.add(wall1);
+ const wall2 = new THREE.Mesh(wallGeo, wallMat); wall2.position.set(0, 12.5, 60); wall2.rotation.y = Math.PI; scene.add(wall2);
+ const wall3 = new THREE.Mesh(wallGeo, wallMat); wall3.position.set(-60, 12.5, 0); wall3.rotation.y = Math.PI / 2; scene.add(wall3);
+ const wall4 = new THREE.Mesh(wallGeo, wallMat); wall4.position.set(60, 12.5, 0); wall4.rotation.y = -Math.PI / 2; scene.add(wall4);
+
+ for (let i = 0; i < 16; i++) {
+ const colGeo = new THREE.BoxGeometry(4, 25, 4);
+ const colMat = new THREE.MeshStandardMaterial({ color: 0x252533, roughness: 0.8 });
+ const col = new THREE.Mesh(colGeo, colMat);
+ col.position.set((Math.random() - 0.5) * 95, 12.5, (Math.random() - 0.5) * 95);
+ scene.add(col);
+ }
+
+ renderer = new THREE.WebGLRenderer({ antialias: true });
+ renderer.setSize(window.innerWidth, window.innerHeight);
+ document.body.appendChild(renderer.domElement);
+
+ document.body.addEventListener('click', () => {
+ document.body.requestPointerLock();
+ });
+
+ document.addEventListener('mousemove', e => {
+ if (document.pointerLockElement === document.body) {
+ yawObject.rotation.y -= e.movementX * 0.002;
+ camera.rotation.x -= e.movementY * 0.002;
+ camera.rotation.x = Math.max(-PI_2, Math.min(PI_2, camera.rotation.x));
+ }
+ });
+
+ window.addEventListener('contextmenu', e => e.preventDefault());
+
+ window.addEventListener('keydown', e => {
+ if (e.code === 'KeyW') move.forward = true;
+ if (e.code === 'KeyS') move.backward = true;
+ if (e.code === 'KeyA') move.left = true;
+ if (e.code === 'KeyD') move.right = true;
+
+ if (['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
+ let slot = parseInt(e.code.replace('Digit', '')) - 1;
+ switchSlot(slot);
+ }
+ });
+
+ window.addEventListener('keyup', e => {
+ if (e.code === 'KeyW') move.forward = false;
+ if (e.code === 'KeyS') move.backward = false;
+ if (e.code === 'KeyA') move.left = false;
+ if (e.code === 'KeyD') move.right = false;
+ });
+
+ document.querySelectorAll('.inv-slot').forEach(slot => {
+ slot.addEventListener('click', (ev) => {
+ ev.stopPropagation();
+ let slotIdx = parseInt(slot.getAttribute('data-slot'));
+ switchSlot(slotIdx);
+ });
+ });
+
+ window.addEventListener('resize', () => {
+ camera.aspect = window.innerWidth / window.innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(window.innerWidth, window.innerHeight);
+ });
+ }
+
+ function switchSlot(slotIndex) {
+ playerStats.activeSlot = slotIndex;
+ playerStats.isBlocking = false;
+ document.querySelectorAll('.inv-slot').forEach((el, idx) => {
+ if (idx === slotIndex) el.classList.add('active');
+ else el.classList.remove('active');
+ });
+ }
+
+ function updateUI() {
+ document.getElementById('hp-fill').style.width = (playerStats.hp / playerStats.maxHp * 100) + '%';
+ document.getElementById('hp-text').innerText = `${Math.max(0, Math.floor(playerStats.hp))} / ${playerStats.maxHp}`;
+
+ document.getElementById('mp-fill').style.width = (playerStats.mp / playerStats.maxMp * 100) + '%';
+ document.getElementById('mp-text').innerText = `${Math.floor(playerStats.mp)} / ${playerStats.maxMp}`;
+ }
+
+ function animate() {
+ requestAnimationFrame(animate);
+
+ if (playerStats.mp < playerStats.maxMp) {
+ playerStats.mp = Math.min(playerStats.maxMp, playerStats.mp + 0.05);
+ }
+
+ velocity.set(0, 0, 0);
+ if (move.forward) velocity.z -= 0.12;
+ if (move.backward) velocity.z += 0.12;
+ if (move.left) velocity.x -= 0.12;
+ if (move.right) velocity.x += 0.12;
+
+ yawObject.translateZ(velocity.z);
+ yawObject.translateX(velocity.x);
+ yawObject.position.x = Math.max(-55, Math.min(55, yawObject.position.x));
+ yawObject.position.z = Math.max(-55, Math.min(55, yawObject.position.z));
+
+ updateUI();
+ renderer.render(scene, camera);
+ }
+ </script>
+</body>
+</html>
